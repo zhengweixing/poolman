@@ -2,38 +2,6 @@
 
 pool manager
 
-## Usage
-
-### Behaviour
-
-```erlang
--type pool() :: any().
--type pool_type() :: random | hash | round_robin | direct | claim.
--type worker_arg() :: list() | map().
--type pool_option() :: {worker_module, Mod :: module()} |
-                       {worker_module, {con, module()}} |
-                       {size, integer()} |
-                       {auto_size, boolean()} |
-                       {pool_type, pool_type()}.
-
--spec start_pool(Pool :: pool(), PoolArgs :: [pool_option()], WorkerArgs :: worker_arg()) ->
-    supervisor:startchild_ret().
-
-%% @doc start pool
-poolman:start_pool(Name, PoolArgs, WorkerArgs).
-
-%% @doc get workers
-poolman:workers(Pool).
-
-%% @doc get pool info
-poolman:info(Pool).
-
-%% @doc call pool
-poolman:transaction(Pool, fun(Worker) -> gen_server:call(Worker, hello)  end).
-
-```
-
-
 ## Example
 example_worker.erl
 ```erlang
@@ -58,46 +26,62 @@ terminate(_Reason, #state{}) ->
     ok.
 ```
 
+start pool
+```erlang
+PoolArgs = [
+    {worker_module, example_worker},
+    {size, 1},
+    {auto_size, true},
+    {pool_type, random} % random | hash | round_robin
+],
+WorkerArgs = #{},
+poolman:start_pool(test, PoolArgs, WorkerArgs).
+
+%% @doc get workers
+poolman:workers(test).
+
+%% @doc get pool info
+poolman:info(test).
+
+%% @doc call pool
+poolman:transaction(test, fun(Worker) -> gen_server:call(Worker, hello)  end).
+```
+
 ## Connection Pool
 it is designed to pool connection/clients to server or database.
 
 the `worker_module` must be `{con, module()}`
 ```erlang
--module(example_worker).
+-module(pg_worker).
 -behaviour(poolman_worker).
 
 -export([connect/1]).
--export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2]).
-
--record(state, {conn}).
 
 connect(Args) ->
-    gen_server:start_link(?MODULE, Args, []).
-
-init(Args) ->
     Hostname = proplists:get_value(hostname, Args),
     Database = proplists:get_value(database, Args),
     Username = proplists:get_value(username, Args),
     Password = proplists:get_value(password, Args),
-    {ok, Conn} = epgsql:connect(Hostname, Username, Password, [
+    epgsql:connect(Hostname, Username, Password, [
         {database, Database}
-    ]),
-    {ok, #state{conn=Conn}}.
+    ]).
+```
+start pool
+```erlang
+PoolArgs = [
+    {worker_module, {con, pg_worker}},
+    {size, 1},
+    {auto_size, true},
+    {pool_type, random} % random | hash | round_robin
+],
+WorkerArgs = [
+    {hostname, "127.0.0.1"},
+    {database, "db"},
+    {username, "admin"},
+    {password, "123456"}
+],
+poolman:start_pool(pg, PoolArgs, WorkerArgs).
 
-handle_call({squery, Sql}, _From, #state{conn=Conn}=State) ->
-    {reply, epgsql:squery(Conn, Sql), State};
-handle_call({equery, Stmt, Params}, _From, #state{conn=Conn}=State) ->
-    {reply, epgsql:equery(Conn, Stmt, Params), State};
-handle_call(_Request, _From, State) ->
-    {reply, ok, State}.
-
-handle_cast(_Msg, State) ->
-    {noreply, State}.
-
-handle_info(_Info, State) ->
-    {noreply, State}.
-
-terminate(_Reason, #state{conn=Conn}) ->
-    ok = epgsql:close(Conn),
-    ok.
+%% @doc call pool
+poolman:transaction(pg, fun(Conn) -> epgsql:squery(Conn, Sql)  end).
 ```
